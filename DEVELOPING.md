@@ -31,3 +31,7 @@ The following must be installed in order to get started. The details of how to i
 3. `yarn build`
 4. `cd ..`
 5. `go get`  
+
+## App Store updates and rollback
+
+See [App update development](docs/app-updates.md) for the separate UI and app-management projects, API additions, recovery behavior, and build/test commands.
