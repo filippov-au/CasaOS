@@ -63,3 +63,7 @@ pnpm run build
 ```
 
 Deploy the app-management build before the UI build, following the existing CasaOS packaging process. The UI displays an unavailable-feature message if connected to a backend without the new endpoints. Building and testing this feature does not install it into a running CasaOS instance.
+
+## Following your fork's main branches
+
+For a mini-PC that should run your latest changes without publishing releases, use [source updates](source-updates.md). The updater fetches your branches, builds and tests in Docker, and backs up the installed components before replacement.
