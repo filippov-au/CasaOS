@@ -41,3 +41,7 @@ CasaOS
 
 # System Files
 .DS_Store
+
+# Python updater test artifacts
+__pycache__/
+*.pyc
