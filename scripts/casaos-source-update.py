@@ -21,6 +21,8 @@ GO_IMAGE = 'golang:1.21.13-bookworm'
 NODE_IMAGE = 'node:20-bookworm'
 RUNNING_SCRIPT = Path(__file__).read_bytes()
 SERVICE = 'casaos-app-management.service'
+SERVICES = ('casaos.service', SERVICE)
+UPDATE_UNIT = 'casaos-source-update.service'
 MANAGED = (
     'usr/bin/casaos-app-management',
     'usr/bin/appfile2compose',
@@ -30,6 +32,8 @@ MANAGED = (
     'etc/systemd/system/casaos-app-management.service.d/90-casaos-fork.conf',
     'usr/local/sbin/casaos-source-update',
     'var/lib/casaos/fork-updates/installed.json',
+    'usr/bin/casaos',
+    'etc/systemd/system/casaos-source-update.service',
 )
 STATE = 'var/lib/casaos/fork-updates'
 DROPIN = MANAGED[5]
@@ -95,7 +99,7 @@ def backup_installation(root, version):
             else:
                 shutil.copy2(source, destination)
             present.append(relative)
-    (folder / 'backup.json').write_text(json.dumps({'format': 1, 'installing': version, 'present': present}, indent=2))
+    (folder / 'backup.json').write_text(json.dumps({'format': 1, 'installing': version, 'present': present, 'managed': list(MANAGED)}, indent=2))
     return folder
 
 
@@ -103,7 +107,10 @@ def restore_files(root, backup):
     record = json.loads((backup / 'backup.json').read_text())
     if record.get('format') != 1 or not set(record['present']).issubset(MANAGED):
         raise ValueError('Invalid backup manifest')
-    for relative in MANAGED:
+    managed = record.get('managed', list(MANAGED[:8]))
+    if not set(managed).issubset(MANAGED) or not set(record['present']).issubset(managed):
+        raise ValueError('Invalid backup manifest')
+    for relative in managed:
         destination = root / relative
         if relative in record['present']:
             replace_path(backup / 'files' / relative, destination)
@@ -116,8 +123,9 @@ def restore_files(root, backup):
 def healthy(command=run):
     # Type=notify gates startup; also catch a process that exits immediately afterwards.
     for _ in range(5):
-        if command('systemctl', 'is-active', SERVICE) != 'active':
-            raise RuntimeError('App-management did not remain active')
+        for service in SERVICES:
+            if command('systemctl', 'is-active', service) != 'active':
+                raise RuntimeError(service + ' did not remain active')
         time.sleep(1)
 
 
@@ -126,19 +134,19 @@ def install_staged(root, staging, version, command=run, health=healthy):
     backup = backup_installation(root, version)
     print('Backup:', backup, flush=True)
     try:
-        command('systemctl', 'stop', SERVICE)
+        command('systemctl', 'stop', *reversed(SERVICES))
         for relative in MANAGED:
             if (staging / relative).exists():
                 replace_path(staging / relative, root / relative)
         command('systemctl', 'daemon-reload')
-        command('systemctl', 'start', SERVICE)
+        command('systemctl', 'start', *SERVICES)
         health(command)
     except BaseException:
         print('Install failed; restoring the previous components.', file=sys.stderr)
-        command('systemctl', 'stop', SERVICE)
+        command('systemctl', 'stop', *reversed(SERVICES))
         restore_files(root, backup)
         command('systemctl', 'daemon-reload')
-        command('systemctl', 'start', SERVICE)
+        command('systemctl', 'start', *SERVICES)
         raise
     return backup
 
@@ -153,10 +161,11 @@ def preflight():
         raise ValueError('This updater requires an existing CasaOS 0.4.x installation')
     if not Path('/usr/bin/casaos-app-management').is_file() or not Path('/var/lib/casaos/www/index.html').is_file():
         raise ValueError('Expected standard CasaOS installation paths were not found')
-    if run('systemctl', 'is-active', SERVICE) != 'active':
-        raise ValueError('App-management must be active before installation')
-    if '/usr/bin/casaos-app-management' not in run('systemctl', 'show', '-p', 'ExecStart', '--value', SERVICE):
-        raise ValueError('App-management uses a custom executable path')
+    for service, executable in zip(SERVICES, ('/usr/bin/casaos', '/usr/bin/casaos-app-management')):
+        if run('systemctl', 'is-active', service) != 'active':
+            raise ValueError(service + ' must be active before installation')
+        if not Path(executable).is_file() or executable not in run('systemctl', 'show', '-p', 'ExecStart', '--value', service):
+            raise ValueError(service + ' uses a custom executable path')
     docker = json.loads(run('docker', 'version', '--format', '{{json .Server}}'))
     minimum = tuple(int(n) for n in docker.get('MinAPIVersion', '1.24').split('.'))
     if minimum > (1, 44):
@@ -193,6 +202,14 @@ def docker_build(image, repository, staging, script, extra=()):
 def build_components(commits, staging, base=SOURCE):
     binaries = staging / 'usr/bin'
     binaries.mkdir(parents=True)
+    docker_build(GO_IMAGE, base / 'CasaOS', staging, r"""
+        go generate ./...
+        go test ./... -run '^$'
+        go test ./internal/sourceupdate ./route/v1 -run 'Source|Check|Start'
+        CGO_ENABLED=0 go build -buildvcs=false -trimpath -tags 'netgo osusergo' \
+          -ldflags '-s -w' -o /out/usr/bin/casaos .
+    """, ['-v', 'casaos-source-gomod:/go/pkg/mod',
+            '-v', 'casaos-source-gocache:/root/.cache/go-build'])
     docker_build(GO_IMAGE, base / 'CasaOS-AppManagement', staging, r"""
         go generate ./...
         go test ./... -run '^$'
@@ -224,6 +241,13 @@ def build_components(commits, staging, base=SOURCE):
     updater.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(base / 'CasaOS/scripts/casaos-source-update.py', updater)
     updater.chmod(0o755)
+    unit = staging / MANAGED[9]
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    unit.write_text('[Unit]\nDescription=Update CasaOS from fork main branches\n'
+                    'After=network-online.target docker.service\nWants=network-online.target\n\n'
+                    '[Service]\nType=oneshot\nRemainAfterExit=yes\n'
+                    'ExecStart=/usr/local/sbin/casaos-source-update web-update\n'
+                    'TimeoutStartSec=infinity\n')
 
 
 def read_installed(root):
@@ -239,9 +263,31 @@ def check_sources(command=run, root=Path('/')):
         print(name + ':', latest[:12], '(installed)' if latest == previous else '(update available)')
 
 
+def web_update(log_path=Path('/var/log/casaos/upgrade.log'), command=subprocess.run):
+    """Keep the existing update dialog's log and completion-marker contract.
+
+    systemd owns this process, so restarting casaos.service cannot kill the build.
+    The child retains the updater lock and normal backup/recovery behavior.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open('w') as log:
+        try:
+            result = command([sys.executable, '-u', str(Path(__file__).resolve()), 'update', '--yes'],
+                             stdout=log, stderr=subprocess.STDOUT)
+            if result.returncode != 0:
+                raise RuntimeError('Source updater exited with code ' + str(result.returncode))
+        except BaseException as error:
+            log.write('\n' + str(error) + '\nCasaOS upgrade failed\n')
+            log.flush()
+            raise
+        log.write('\nCasaOS upgrade successfully\n')
+        log.flush()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='action', required=True)
+    sub.add_parser('web-update', help='Run from the CasaOS update dialog via systemd')
     sub.add_parser('check', help='Compare installed commits with your main branches')
     update = sub.add_parser('update', help='Build your main branches and install after tests pass')
     update.add_argument('--yes', action='store_true', help='Skip the installation confirmation')
@@ -255,6 +301,9 @@ def main():
         return
     if os.geteuid() != 0:
         parser.error('Run update or rollback with sudo')
+    if args.action == 'web-update':
+        web_update()
+        return
     root = Path('/')
     state = root / STATE
     regular_layout(root)
@@ -273,16 +322,16 @@ def main():
             safety = backup_installation(root, 'manual-rollback')
             print('Current components saved:', safety)
             try:
-                run('systemctl', 'stop', SERVICE)
+                run('systemctl', 'stop', *reversed(SERVICES))
                 restore_files(root, backup)
                 run('systemctl', 'daemon-reload')
-                run('systemctl', 'start', SERVICE)
+                run('systemctl', 'start', *SERVICES)
                 healthy()
             except BaseException:
-                run('systemctl', 'stop', SERVICE)
+                run('systemctl', 'stop', *reversed(SERVICES))
                 restore_files(root, safety)
                 run('systemctl', 'daemon-reload')
-                run('systemctl', 'start', SERVICE)
+                run('systemctl', 'start', *SERVICES)
                 raise
             print('Previous components restored. App data was not changed.')
             return
@@ -296,7 +345,7 @@ def main():
         if platform.machine() not in ('x86_64', 'aarch64'):
             raise ValueError('This updater supports x86-64 and ARM64 only')
         if not args.yes:
-            print('Fetch your main branches, build and test UI and app-management, and back up existing components.')
+            print('Fetch your main branches, build and test CasaOS, UI and app-management, and back up existing components.')
             if input('Continue? [y/N] ').lower() != 'y':
                 return
         commits = {name: sync_repository(name) for name in REPOSITORIES}
@@ -334,7 +383,7 @@ def main():
             backup = install_staged(root, staging, version)
             print('Installed', version, '— refresh CasaOS in your browser.')
             print('Rollback command: sudo casaos-source-update rollback --backup', backup)
-            print('Use casaos-source-update for future source updates; the built-in system updater still uses the official channel.')
+            print('Use the CasaOS Update button or casaos-source-update for future updates from your main branches.')
         finally:
             if not args.build_only:
                 shutil.rmtree(workspace)

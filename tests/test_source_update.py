@@ -52,7 +52,7 @@ class SourceUpdateTests(unittest.TestCase):
         self.assertEqual((self.root / updater.MANAGED[0]).read_text(), 'old')
         self.assertEqual((self.root / updater.MANAGED[2] / 'index.html').read_text(), 'old')
         self.assertEqual(self.data.read_text(), 'live user data')
-        self.assertEqual(self.commands[-1], ('systemctl', 'start', updater.SERVICE))
+        self.assertEqual(self.commands[-1], ('systemctl', 'start', *updater.SERVICES))
 
     def test_copy_failure_restores_already_replaced_files(self):
         actual = updater.replace_path
@@ -92,7 +92,7 @@ class SourceUpdateTests(unittest.TestCase):
                     if args[0] == 'docker':
                         return json.dumps({'MinAPIVersion': minimum})
                     if 'ExecStart' in args:
-                        return '{ path=/usr/bin/casaos-app-management ; argv[]=/usr/bin/casaos-app-management ; }'
+                        return '/usr/bin/casaos /usr/bin/casaos-app-management'
                     return 'active'
                 with patch.object(updater, 'run', side_effect=command), \
                      patch.object(updater.platform, 'system', return_value='Linux'), \
@@ -103,6 +103,43 @@ class SourceUpdateTests(unittest.TestCase):
                             updater.preflight()
                     else:
                         self.assertEqual(updater.preflight(), expected)
+
+    def test_web_update_reports_success_only_after_child_finishes(self):
+        log = self.root / 'upgrade.log'
+        def command(args, **kwargs):
+            self.assertEqual(args[-2:], ['update', '--yes'])
+            self.assertNotIn('upgrade successfully', log.read_text())
+            return type('Result', (), {'returncode': 0})()
+        updater.web_update(log, command)
+        self.assertIn('CasaOS upgrade successfully', log.read_text())
+
+    def test_web_update_reports_failure(self):
+        log = self.root / 'upgrade.log'
+        with self.assertRaises(RuntimeError):
+            updater.web_update(log, lambda *a, **kw: type('Result', (), {'returncode': 1})())
+        self.assertIn('CasaOS upgrade failed', log.read_text())
+        self.assertNotIn('CasaOS upgrade successfully', log.read_text())
+
+    def test_legacy_backup_does_not_remove_core_binary(self):
+        backup = updater.backup_installation(self.root, 'old-updater')
+        record = json.loads((backup / 'backup.json').read_text())
+        del record['managed']
+        (backup / 'backup.json').write_text(json.dumps(record))
+        core = self.root / 'usr/bin/casaos'
+        core.write_text('core')
+        updater.restore_files(self.root, backup)
+        self.assertEqual(core.read_text(), 'core')
+
+    def test_core_is_restored_on_failed_install(self):
+        core = self.root / 'usr/bin/casaos'
+        core.write_text('old core')
+        (self.staging / 'usr/bin/casaos').write_text('new core')
+        def health(command):
+            self.assertEqual(core.read_text(), 'new core')
+            raise RuntimeError('core startup failed')
+        with self.assertRaises(RuntimeError):
+            updater.install_staged(self.root, self.staging, 'main-test', self.command, health)
+        self.assertEqual(core.read_text(), 'old core')
 
     def test_dirty_checkout_is_not_overwritten(self):
         source = Path(self.temporary.name) / 'sources'
