@@ -1,6 +1,12 @@
 # App Store updates and rollback
 
-The App Store has an **Updates** tab for checking installed applications and updating them individually to their configured store's version. Each app shows its current version, the offered version, check errors, operation progress, and an available previous version.
+The App Store has an **Updates** tab that opens with **Docker registry** selected. It checks every installed Compose app, including custom apps, directly against its image registries. Each service shows its configured image, the offered registry image, installed and remote image IDs, and any check error. Checking does not download image layers or change containers.
+
+For stable `x.y.z` or `vx.y.z` tags, the checker offers the highest newer stable tag with the same prefix that supports the installed OS and CPU architecture. This can include a new major version. Floating tags such as `latest`, shortened tags such as `16`, and custom suffixes such as `1.2.3-alpine` are checked for new builds of that same tag. Prerelease tags are not offered as stable releases. Digest references stay pinned. Local builds and restored rollback references show an explanation instead of claiming to be current.
+
+The comparison uses the platform's image configuration digest, so changes to another architecture in a multi-platform index do not produce false alerts. Checks use HTTPS with certificate verification, support anonymous and Docker registry authentication through the existing credential configuration, and have a 45-second deadline per image. Errors remain visible separately from “up to date.”
+
+Registry versions are informational: select a different tag in app settings after reviewing its compatibility. Choose **App Store** in the source menu to check catalogs and use the existing per-app update action. Store updates show the current version, offered store version, operation progress, and an available previous version.
 
 Rollback restores the previous images and Compose settings. It keeps current app data, including changes made after the update. It does not reverse database migrations. There is one recovery point per app; a successful rollback consumes it. Failed rollback attempts keep it available for retry.
 
@@ -22,7 +28,8 @@ In the UI project, `src/components/Apps/AppUpdates.vue` implements the tab's con
 All endpoints use the existing app-management authentication middleware:
 
 - `GET /v2/app_management/updates`: installed apps with check and operation status.
-- `POST /v2/app_management/updates/check`: refresh catalogs and check all installed apps; individual failures remain visible in the response.
+- `POST /v2/app_management/updates/check?source=registry`: check installed registry images without consulting store catalogs. Results are returned in additive `registry_images` and `registry_checked_at` fields, independently of the existing store status.
+- `POST /v2/app_management/updates/check` (or `?source=store`): refresh catalogs and check all installed apps; individual failures remain visible in the response. Omitting the source preserves the behavior of existing clients.
 - `PATCH /v2/app_management/compose/{id}`: existing update endpoint, now saves a recovery point before replacing containers.
 - `POST /v2/app_management/compose/{id}/rollback`: starts recovery; poll the list endpoint for its result.
 

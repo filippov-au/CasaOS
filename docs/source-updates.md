@@ -15,7 +15,9 @@ git clone --depth 1 --branch main https://github.com/filippov-au/CasaOS.git /opt
 python3 /opt/casaos-source/CasaOS/scripts/casaos-source-update.py update
 ```
 
-After this one-time installation, use **Settings → Update → Upgrade Now** in CasaOS. The existing update indicator checks your three `main` branches when the dashboard loads, when Settings opens, and every five minutes while the dashboard is open. The server caches checks for 30 seconds. The dialog lists installed and remote commit IDs and streams the normal upgrade log. A failed GitHub check is reported separately from “up to date” and does not block login.
+After this one-time installation, use **Settings → System updates → View updates → Review update → Upgrade Now** in CasaOS. The existing update indicator checks your three `main` branches when the dashboard loads, when Settings opens, and every five minutes while the dashboard is open. The server caches checks for 30 seconds. The dialog lists installed and remote commit IDs and streams the normal upgrade log. A failed GitHub check is reported separately from “up to date” and does not block login.
+
+The Settings card labels this as **System updates**. A source build can have new commits while its base version remains `v0.4.15`; the card therefore says “New commits available on main” instead of claiming a new release version. Running updates, incomplete comparisons, and failed checks have distinct statuses, and only confirmed differences show the update dot. **View updates** opens the component comparison page.
 
 If the previous command-line updater is already installed, run `casaos-source-update update` once to install this integration. Thereafter the same built-in button follows your fork; no release is needed.
 
