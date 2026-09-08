@@ -37,6 +37,9 @@ import (
 // @Success 200 {string} string "ok"
 // @Router /sys/version/check [get]
 func GetSystemCheckVersion(ctx echo.Context) error {
+	if sourceUpdates.Configured() {
+		return getSourceVersion(ctx)
+	}
 	need, version := version.IsNeedUpdate(service.MyService.Casa().GetCasaosVersion())
 	if need {
 		installLog := model2.AppNotify{}
@@ -63,6 +66,9 @@ func GetSystemCheckVersion(ctx echo.Context) error {
 // @Success 200 {string} string "ok"
 // @Router /sys/update [post]
 func SystemUpdate(ctx echo.Context) error {
+	if sourceUpdates.Configured() {
+		return startSourceUpdate(ctx)
+	}
 	need, version := version.IsNeedUpdate(service.MyService.Casa().GetCasaosVersion())
 	if need {
 		service.MyService.System().UpdateSystemVersion(version.Version)
