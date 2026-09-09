@@ -16,6 +16,10 @@ When every service already uses the exact offered image ID, the UI shows **Pin v
 
 A successful check prepares an installation plan in the private recovery record. **Update** confirms the displayed version and sends that plan's token. A different plan, changed app settings, a plan from an older release-selection policy, or a plan older than 24 hours requires another check. After pulling, CasaOS verifies the image IDs against the checked plan before replacing any containers. A tag that moved in the meantime is reported as an error rather than silently installing a different build. Checking itself never downloads image layers or replaces containers.
 
+**Update all** reviews every available software update in one confirmation and starts each app using its own reviewed plan token. Apps already running an operation, pin-only offers, and apps without a prepared update are excluded. Each app retains its own progress, operation lock, image verification, and recovery point. A failure to start one app does not prevent the others from starting; failures stay visible for review.
+
+The updates list shows pending updates, available version pins, running operations, and errors. Up-to-date apps are hidden. Successful updates and pins disappear as soon as status polling reports completion. Completion does not trigger another registry scan: the backend records a verified checked installation as up to date, and the UI polls only local operation status. **Check for updates** performs a fresh scan; opening the tab also checks unless an operation is already running. Previous versions remain accessible under the separate, collapsed **Restore previous versions** section.
+
 Registry checks use HTTPS with certificate verification, support anonymous and configured registry authentication, and have a 45-second deadline per image. A failed service check prevents an installable offer for that app and leaves the error visible. Previous update/rollback recovery remains available independently.
 
 Rollback restores the previous images and Compose settings. It keeps current app data, including changes made after the update. It does not reverse database migrations. There is one recovery point per app; a successful rollback consumes it. Failed rollback attempts keep it available for retry.
@@ -49,7 +53,7 @@ Recovery records live in `app-updates` alongside the configured apps directory (
 
 A replacement recovery point is committed only after the new app starts and configured Compose health checks pass. Startup failures retain a pending recovery point and offer manual rollback. A service restart marks unfinished operations as interrupted; saved installations remain discoverable even when no containers survived the failed operation. Data volumes are never removed by updates or rollback, and anonymous volumes are retained by their actual Docker names.
 
-Apps with local builds, missing installed containers, or replicated services may require a manual update. The feature does not provide automatic updates, bulk updates, data backups, or recovery for updates made before it was installed.
+Apps with local builds, missing installed containers, or replicated services may require a manual update. The feature does not provide automatic updates, data backups, or recovery for updates made before it was installed.
 
 ## Build and validation
 
