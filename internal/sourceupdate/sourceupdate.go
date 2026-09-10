@@ -39,6 +39,8 @@ type Status struct {
 	CheckError   string       `json:"check_error"`
 	Operation    string       `json:"operation"`
 }
+
+// Runner executes one command. Check calls it once per repository, concurrently.
 type Runner func(context.Context, string, ...string) (string, error)
 type Manager struct {
 	mu         sync.Mutex
@@ -158,26 +160,44 @@ func (m *Manager) Check(ctx context.Context) (Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if time.Since(m.checkedAt) >= 30*time.Second {
-		latest := map[string]string{}
-		var failures []string
-		for _, name := range repositories {
-			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			output, err := m.Run(checkCtx, "git", "ls-remote", "https://github.com/filippov-au/"+name+".git", "refs/heads/main")
-			cancel()
-			fields := strings.Fields(output)
-			if err != nil || len(fields) != 2 || !shaPattern.MatchString(fields[0]) || fields[1] != "refs/heads/main" {
-				failures = append(failures, name)
-			} else {
-				latest[name] = fields[0]
-			}
+		latest := make([]string, len(repositories))
+		failed := make([]bool, len(repositories))
+		var group sync.WaitGroup
+		for i, name := range repositories {
+			i, name := i, name
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				// Each remote gets its own deadline so that one unreachable
+				// repository cannot cut the other lookups short.
+				checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				output, err := m.Run(checkCtx, "git", "ls-remote", "https://github.com/filippov-au/"+name+".git", "refs/heads/main")
+				fields := strings.Fields(output)
+				if err != nil || len(fields) != 2 || !shaPattern.MatchString(fields[0]) || fields[1] != "refs/heads/main" {
+					failed[i] = true
+					return
+				}
+				latest[i] = fields[0]
+			}()
 		}
+		group.Wait()
 		m.checkedAt = time.Now()
 		m.checkError = ""
+		var failures []string
+		for i, name := range repositories {
+			if failed[i] {
+				failures = append(failures, name)
+			}
+		}
 		if len(failures) > 0 {
 			m.checkError = "Could not check GitHub: " + strings.Join(failures, ", ")
 			m.latest = nil
 		} else {
-			m.latest = latest
+			m.latest = map[string]string{}
+			for i, name := range repositories {
+				m.latest[name] = latest[i]
+			}
 		}
 	}
 	return m.status(ctx)

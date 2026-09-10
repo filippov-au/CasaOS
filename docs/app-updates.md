@@ -20,7 +20,7 @@ A successful check prepares an installation plan in the private recovery record.
 
 The updates list shows pending updates, available version pins, running operations, and errors. Up-to-date apps are hidden. Successful updates and pins disappear as soon as status polling reports completion. Completion does not trigger another registry scan: the backend records a verified checked installation as up to date, and the UI polls only local operation status. **Check for updates** performs a fresh scan; opening the tab also checks unless an operation is already running. Previous versions remain accessible under the separate, collapsed **Restore previous versions** section.
 
-Registry checks use HTTPS with certificate verification, support anonymous and configured registry authentication, and have a 45-second deadline per image. A failed service check prevents an installable offer for that app and leaves the error visible. Previous update/rollback recovery remains available independently.
+Registry checks use HTTPS with certificate verification, support anonymous and configured registry authentication, and have a 45-second deadline per image. Apps, and the services inside them, are checked concurrently up to a fixed limit, so a scan no longer waits for one registry round trip after another. A failed service check prevents an installable offer for that app and leaves the error visible. Previous update/rollback recovery remains available independently.
 
 Rollback restores the previous images and Compose settings. It keeps current app data, including changes made after the update. It does not reverse database migrations. There is one recovery point per app; a successful rollback consumes it. Failed rollback attempts keep it available for retry.
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -36,12 +37,15 @@ func idle(context.Context, string, ...string) (string, error) {
 	return "LoadState=loaded\nActiveState=inactive\nResult=success", nil
 }
 func TestCheckDetectsCommitWithoutVersionChange(t *testing.T) {
+	var mu sync.Mutex
 	calls := 0
 	m := setup(t, func(ctx context.Context, name string, args ...string) (string, error) {
 		if name == "git" {
+			mu.Lock()
 			calls++
+			mu.Unlock()
 			if !strings.HasPrefix(args[1], "https://github.com/filippov-au/") || args[2] != "refs/heads/main" {
-				t.Fatal(args)
+				t.Errorf("unexpected lookup: %v", args)
 			}
 			sha := shaA
 			if strings.Contains(args[1], "CasaOS-UI") {
@@ -59,6 +63,8 @@ func TestCheckDetectsCommitWithoutVersionChange(t *testing.T) {
 		t.Fatalf("%+v", s.Repositories)
 	}
 	_, _ = m.Check(context.Background())
+	mu.Lock()
+	defer mu.Unlock()
 	if calls != 3 {
 		t.Fatalf("cache missed: %d", calls)
 	}
