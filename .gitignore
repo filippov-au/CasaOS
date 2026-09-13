@@ -45,3 +45,14 @@ CasaOS
 # Python updater test artifacts
 __pycache__/
 *.pyc
+
+# Local development settings and generated reports
+.env
+.env.local
+.env.*.local
+.playwright-cli/
+/output/
+/coverage/
+/test-results/
+/.cache/
+*.log
